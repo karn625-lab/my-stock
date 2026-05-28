@@ -9,7 +9,7 @@ st.set_page_config(layout="wide", page_title="My Stock Portfolio")
 
 st.title("📊 My Custom Stock Terminal")
 
-# 🔍 ค้นหาไฟล์ Excel ในโปรเจกต์อัตโนมัติ
+# 🔍 ค้นหาไฟล์ Excel ในโปรเจกต์อัตโนมัติ (ไม่ว่าจะเป็น portfolio.xlsx หรือชื่อมีวันที่พ่วงท้าย)
 @st.cache_resource
 def find_excel_file():
     excel_files = glob.glob("My portfolio_*.xlsx") + glob.glob("portfolio.xlsx")
@@ -19,16 +19,18 @@ def find_excel_file():
 
 EXCEL_FILE = find_excel_file()
 
-# ฟังก์ชันโหลดข้อมูลจาก Excel มาใช้เป็นฐานข้อมูลหลักใน Session State
+# 📦 โหลดข้อมูลจาก Excel มาใช้เป็นฐานข้อมูลหลักใน Session State พร้อมล้างช่องว่างขยะออก
 if 'df_all' not in st.session_state:
     if EXCEL_FILE:
         try:
             df = pd.read_excel(EXCEL_FILE)
             # ปรับชื่อคอลัมน์มาตรฐาน
             df = df.rename(columns={'Fill Price': 'Fill_Price', 'Closing Time': 'Closing_Time'})
-            # คลีนช่องว่างเผื่อมี
+            
+            # ✨ ล้างช่องว่างที่แอบแฝงอยู่ในคอลัมน์ Symbol ทั้งหมดให้สะอาดร้อยเปอร์เซ็นต์
             if 'Symbol' in df.columns:
                 df['Symbol'] = df['Symbol'].astype(str).str.strip()
+                
             st.session_state.df_all = df
         except Exception as e:
             st.sidebar.error(f"โหลดไฟล์ Excel ไม่สำเร็จ: {e}")
@@ -85,7 +87,6 @@ if show_manager:
     if not st.session_state.df_all.empty:
         with st.expander("🗑️ ลบธุรกรรมที่บันทึกไว้ (Delete Transaction)"):
             st.write("กดปุ่ม 'ลบ' ท้ายรายการที่ต้องการเอาออก:")
-            # วนลูปย้อนกลับจากรายการล่าสุดลงไป
             df_display = st.session_state.df_all.copy()
             for idx in reversed(df_display.index):
                 row = df_display.loc[idx]
@@ -106,9 +107,12 @@ if not df_raw.empty:
     df_buy = df_raw[df_raw['Side'] == 'Buy'].copy()
     df_div = df_raw[df_raw['Side'] == 'Dividend'].copy()
     
+    # ฟังก์ชันแปลงชื่อหุ้นให้เป็นมาตรฐาน Yahoo Finance แบบล้างช่องว่างขยะออก
     def convert_symbol(symbol):
-        if symbol.startswith('SET:'): return symbol.replace('SET:', '') + '.BK'
-        return symbol.replace('NASDAQ:', '').replace('NYSE:', '')
+        sym_clean = str(symbol).strip()
+        if sym_clean.startswith('SET:'): 
+            return sym_clean.replace('SET:', '').strip() + '.BK'
+        return sym_clean.replace('NASDAQ:', '').replace('NYSE:', '').strip()
 
     if not df_buy.empty:
         df_buy['YF_Symbol'] = df_buy['Symbol'].apply(convert_symbol)
