@@ -60,7 +60,7 @@ if show_manager:
     with st.expander("➕ เพิ่มธุรกรรมใหม่ (Add Transaction)", expanded=False):
         with st.form("add_form", clear_on_submit=True):
             sym = st.text_input("สัญลักษณ์หุ้น (เช่น SET:PTT หรือ NASDAQ:AAPL)").strip()
-            side = St.selectbox("ประเภทธุรกรรม (Side)", ["Buy", "Dividend"])
+            side = st.selectbox("ประเภทธุรกรรม (Side)", ["Buy", "Dividend"])
             qty = st.number_input("จำนวนหุ้น / จำนวนเงินปันผลที่ได้รับ (Qty)", min_value=0.0, step=0.000001, format="%.6f")
             price = st.number_input("ราคาต่อหน่วย (Fill Price) *ใส่ 0 ถ้าเป็นเงินปันผล*", min_value=0.0, step=0.01)
             comm = st.number_input("ค่าธรรมเนียม / คอมมิชชั่น (Commission)", min_value=0.0, step=0.01)
