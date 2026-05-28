@@ -8,7 +8,7 @@ import os
 # 1. การตั้งค่าหน้าจอแบบ Wide-screen
 st.set_page_config(layout="wide", page_title="Karn Stock Portfolio")
 
-st.title("📊 My Custom Stock Terminal")
+st.title("📊 Karn Stock Terminal")
 
 # 🔍 ค้นหาไฟล์ Excel ในโปรเจกต์อัตโนมัติ
 @st.cache_resource
