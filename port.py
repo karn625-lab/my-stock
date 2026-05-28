@@ -9,7 +9,7 @@ st.set_page_config(layout="wide", page_title="My Stock Portfolio")
 
 st.title("📊 My Custom Stock Terminal")
 
-# 🔍 ค้นหาไฟล์ Excel ในโปรเจกต์อัตโนมัติ (ไม่ว่าจะเป็น portfolio.xlsx หรือชื่อมีวันที่พ่วงท้าย)
+# 🔍 ค้นหาไฟล์ Excel ในโปรเจกต์อัตโนมัติ
 @st.cache_resource
 def find_excel_file():
     excel_files = glob.glob("My portfolio_*.xlsx") + glob.glob("portfolio.xlsx")
@@ -19,24 +19,24 @@ def find_excel_file():
 
 EXCEL_FILE = find_excel_file()
 
-# 📦 โหลดข้อมูลจาก Excel มาใช้เป็นฐานข้อมูลหลักใน Session State พร้อมล้างช่องว่างขยะออก
-if 'df_all' not in st.session_state:
+# 📦 โหลดข้อมูลเริ่มต้นจาก Excel เข้าสู่ระบบความจำ (Session State) ในรูปแบบ List เพื่อความเสถียรสูงสุด
+if 'transactions_list' not in st.session_state:
     if EXCEL_FILE:
         try:
             df = pd.read_excel(EXCEL_FILE)
-            # ปรับชื่อคอลัมน์มาตรฐาน
             df = df.rename(columns={'Fill Price': 'Fill_Price', 'Closing Time': 'Closing_Time'})
             
-            # ✨ ล้างช่องว่างที่แอบแฝงอยู่ในคอลัมน์ Symbol ทั้งหมดให้สะอาดร้อยเปอร์เซ็นต์
+            # ล้างคอลัมน์และช่องว่างขยะออกให้สะอาด
             if 'Symbol' in df.columns:
                 df['Symbol'] = df['Symbol'].astype(str).str.strip()
-                
-            st.session_state.df_all = df
+            
+            # แปลงข้อมูลเก็บเป็น List ของดิกชันนารี เพื่อป้องกันปัญหาชนิดข้อมูลรวนบนคลาวด์
+            st.session_state.transactions_list = df.to_dict(orient='records')
         except Exception as e:
             st.sidebar.error(f"โหลดไฟล์ Excel ไม่สำเร็จ: {e}")
-            st.session_state.df_all = pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
+            st.session_state.transactions_list = []
     else:
-        st.session_state.df_all = pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
+        st.session_state.transactions_list = []
 
 # ดึงอัตราแลกเปลี่ยนเงินตราปัจจุบัน (USDTHB)
 @st.cache_data(ttl=3600)
@@ -49,7 +49,7 @@ def get_fx_rate():
 fx_rate = get_fx_rate()
 
 # ==============================================================================
-# SIDEBAR: หน้าต่างจัดการธุรกรรม (UI สำหรับ Add / Delete บนความทรงจำ Session)
+# SIDEBAR: หน้าต่างจัดการธุรกรรม (UI สำหรับ Add / Delete)
 # ==============================================================================
 st.sidebar.header("⚙️ Portfolio Management")
 show_manager = st.sidebar.checkbox("เปิดเมนูจัดการธุรกรรม (Add/Delete)")
@@ -70,30 +70,31 @@ if show_manager:
             
             submit_btn = st.form_submit_button("บันทึกข้อมูลธุรกรรม")
             if submit_btn and sym:
-                # สร้างแถวข้อมูลใหม่
-                new_row = pd.DataFrame([{
-                    'Symbol': sym, 'Side': side, 'Qty': qty, 
-                    'Fill_Price': price, 'Commission': comm, 'Closing_Time': str(date)
-                }])
-                # ตรวจสอบและ append ข้อมูลเข้า session state
-                if st.session_state.df_all.empty:
-                    st.session_state.df_all = new_row
-                else:
-                    st.session_state.df_all = pd.concat([st.session_state.df_all, new_row], ignore_index=True)
-                st.success(f"บันทึกข้อมูลของ {sym} ลงหน้าจอเรียบร้อย!")
+                # สร้างดิกชันนารีข้อมูลชุดใหม่แบบพิมพ์ใหญ่ทั้งหมด (.upper()) ป้องกันการพิมพ์ผิดพลาด
+                new_data = {
+                    'Symbol': str(sym).upper().strip(),
+                    'Side': str(side),
+                    'Qty': float(qty),
+                    'Fill_Price': float(price),
+                    'Commission': float(comm),
+                    'Closing_Time': str(date)
+                }
+                # เพิ่มลงใน List ความจำตรง ๆ ไม่ต้องผ่าน concat ให้เสี่ยงบั๊กรวน
+                st.session_state.transactions_list.append(new_data)
+                st.success(f"บันทึกข้อมูลของ {sym.upper()} เรียบร้อยแล้ว!")
                 st.rerun()
 
     # ส่วนตารางรายการล่าสุดเพื่อกดลบออก (DELETE)
-    if not st.session_state.df_all.empty:
+    if len(st.session_state.transactions_list) > 0:
         with st.expander("🗑️ ลบธุรกรรมที่บันทึกไว้ (Delete Transaction)"):
             st.write("กดปุ่ม 'ลบ' ท้ายรายการที่ต้องการเอาออก:")
-            df_display = st.session_state.df_all.copy()
-            for idx in reversed(df_display.index):
-                row = df_display.loc[idx]
+            # วนลูปย้อนกลับจากรายการท้ายสุดขึ้นมาโชว์
+            for idx in reversed(range(len(st.session_state.transactions_list))):
+                item = st.session_state.transactions_list[idx]
                 col_item, col_btn = st.columns([4, 1])
-                col_item.write(f"รายการ {idx}: **{row['Symbol']}** | {row['Side']} | Qty: {row['Qty']:,} | ราคา: {row['Fill_Price']:,}")
-                if col_btn.button("ลบ", key=f"del_{idx}"):
-                    st.session_state.df_all = st.session_state.df_all.drop(idx).reset_index(drop=True)
+                col_item.write(f"รายการที่ {idx}: **{item['Symbol']}** | {item['Side']} | Qty: {item['Qty']:,} | ราคา: {item['Fill_Price']:,}")
+                if col_btn.button("ลบ", key=f"del_item_{idx}"):
+                    st.session_state.transactions_list.pop(idx)
                     st.success(f"ลบรายการลำดับที่ {idx} เรียบร้อย!")
                     st.rerun()
     st.markdown("---")
@@ -101,15 +102,19 @@ if show_manager:
 # ==============================================================================
 # MAIN DASHBOARD: คำนวณผลและแสดงกราฟหน้าจอหลัก
 # ==============================================================================
-df_raw = st.session_state.df_all.copy()
+# แปลงความจำใน List กลับมาเป็น DataFrame เพื่อคำนวณกราฟ
+if len(st.session_state.transactions_list) > 0:
+    df_raw = pd.DataFrame(st.session_state.transactions_list)
+else:
+    df_raw = pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
 
 if not df_raw.empty:
     df_buy = df_raw[df_raw['Side'] == 'Buy'].copy()
     df_div = df_raw[df_raw['Side'] == 'Dividend'].copy()
     
-    # ฟังก์ชันแปลงชื่อหุ้นให้เป็นมาตรฐาน Yahoo Finance แบบล้างช่องว่างขยะออก
+    # ฟังก์ชันแปลงชื่อหุ้นให้เป็นมาตรฐาน Yahoo Finance
     def convert_symbol(symbol):
-        sym_clean = str(symbol).strip()
+        sym_clean = str(symbol).upper().strip()
         if sym_clean.startswith('SET:'): 
             return sym_clean.replace('SET:', '').strip() + '.BK'
         return sym_clean.replace('NASDAQ:', '').replace('NYSE:', '').strip()
@@ -132,16 +137,37 @@ if not df_raw.empty:
         portfolio = portfolio.merge(div_summary, on='Symbol', how='left')
         portfolio['Total_Dividend'] = portfolio['Total_Dividend'].fillna(0)
         
+        # 🏎️ ระบบดึงราคาแบบความเร็วสูง (Bulk Download) ป้องกันปัญหาราคาหลุดเป็น 0 บนคลาวด์
         with st.spinner('กำลังอัปเดตราคาหุ้นล่าสุดแบบเรียลไทม์...'):
             prices = []
-            for s in portfolio['YF_Symbol']:
+            symbol_list = portfolio['YF_Symbol'].tolist()
+            
+            if symbol_list:
                 try:
-                    ticker_obj = yf.Ticker(s)
-                    hist = ticker_obj.history(period="1d")
-                    last_price = hist['Close'].iloc[-1] if not hist.empty else 0
+                    data_download = yf.download(symbol_list, period="1d", group_by='ticker', verbose=False)
+                    for s in symbol_list:
+                        last_price = 0
+                        try:
+                            if len(symbol_list) == 1:
+                                last_price = data_download['Close'].iloc[-1]
+                            else:
+                                last_price = data_download[s]['Close'].iloc[-1]
+                        except:
+                            try:
+                                last_price = yf.Ticker(s).fast_info['last_price']
+                            except:
+                                last_price = 0
+                        
+                        # แผนสำรอง: ถ้าราคาที่ดึงมาเอ๋อหรือเป็น 0 ให้เอาค่าเฉลี่ยต้นทุนประคองไว้ก่อน หน้าจอจะได้ไม่แดงเถือก
+                        if pd.isna(last_price) or last_price <= 0:
+                            avg_p = portfolio[portfolio['YF_Symbol'] == s]['Avg_Price'].values[0]
+                            prices.append(avg_p if avg_p > 0 else 0)
+                        else:
+                            prices.append(last_price)
                 except:
-                    last_price = 0
-                prices.append(last_price)
+                    prices = portfolio['Avg_Price'].tolist()
+            else:
+                prices = []
                 
             portfolio['Current_Price'] = prices
 
@@ -152,7 +178,7 @@ if not df_raw.empty:
         portfolio['Dividend_THB'] = portfolio.apply(lambda x: x['Total_Dividend'] * fx_rate if ".BK" not in x['YF_Symbol'] else x['Total_Dividend'], axis=1)
         
         portfolio['PL_THB'] = portfolio['Value_THB'] - portfolio['Cost_THB']
-        portfolio['PL_Percent'] = (portfolio['PL_THB'] / portfolio['Cost_THB']) * 100
+        portfolio['PL_Percent'] = (portfolio['PL_THB'] / portfolio['Cost_THB']) * 100 if portfolio['Cost_THB'].sum() > 0 else 0
         
         total_val_thb = portfolio['Value_THB'].sum()
         total_cost_thb = portfolio['Cost_THB'].sum()
@@ -169,7 +195,7 @@ if not df_raw.empty:
             st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Equity (มูลค่าพอร์ตปัจจุบัน)</p><p style="color: #ffffff; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_val_thb:,.2f}</p><p style="color: #787b86; font-size: 18px; margin: 2px 0 0 0;">${total_val_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
         with col2:
             pl_color = "#089981" if total_pl_thb >= 0 else "#f23645"
-            st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Profit/Loss (กำไร/ขาดทุนรวม)</p><p style="color: {pl_color}; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_pl_thb:,.2f} <span style="font-size: 18px; font-weight: 500;">({total_pl_percent:+.2f}%)</span></p><p style="color: {pl_color}; opacity: 0.8; font-size: 18px; margin: 2px 0 0 0;">${total_pl_usd:,.2f} <span style="font-size: 14px; color: #787b86;">USD</span></p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Profit/Loss (กำไร/ขาดทุนรวม)</p><p style="color: {pl_color}; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_pl_thb:,.2f} <span style="font-size: 18px; font-weight: 500;">({total_pl_percent:+.2f}%)</span></p><p style="color: {pl_color}; opacity: 0.8; font-size: 18px; margin: 2px 0 0 0;">${total_pl_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
         with col3:
             st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Dividends (ปันผลรับรวม)</p><p style="color: #ffffff; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_dist_div_thb:,.2f}</p><p style="color: #787b86; font-size: 18px; margin: 2px 0 0 0;">${total_dist_div_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
         
