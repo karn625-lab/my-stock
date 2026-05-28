@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 import plotly.express as px
 import glob
+import os
 
 # 1. การตั้งค่าหน้าจอแบบ Wide-screen
 st.set_page_config(layout="wide", page_title="My Stock Portfolio")
@@ -15,27 +16,27 @@ def find_excel_file():
     excel_files = glob.glob("My portfolio_*.xlsx") + glob.glob("portfolio.xlsx")
     if excel_files:
         return excel_files[0]
-    return None
+    return "portfolio.xlsx"  # ถ้าไม่เจอเลย ให้ใช้ชื่อนี้เป็นตัวตั้งต้น
 
 EXCEL_FILE = find_excel_file()
 
-# 📦 โหลดข้อมูลจาก Excel เข้าสู่ความจำ (Session State) ในรูปแบบ List เพื่อความเสถียรสูงสุด
-if 'transactions_list' not in st.session_state:
-    if EXCEL_FILE:
+# 📦 ฟังก์ชันสำหรับโหลดข้อมูลจาก Excel สดใหม่ทุกครั้ง (ไม่ใช้ Cache ค้างใน Session ยาวๆ เพื่อลดบั๊กตอนรีเฟรช)
+def load_data_from_excel():
+    if os.path.exists(EXCEL_FILE):
         try:
             df = pd.read_excel(EXCEL_FILE)
             df = df.rename(columns={'Fill Price': 'Fill_Price', 'Closing Time': 'Closing_Time'})
-            
             if 'Symbol' in df.columns:
                 df['Symbol'] = df['Symbol'].astype(str).str.strip()
-            
-            # บันทึกข้อมูลเข้า List ตรงๆ
-            st.session_state.transactions_list = df.to_dict(orient='records')
+            return df
         except Exception as e:
-            st.sidebar.error(f"โหลดไฟล์ Excel ไม่สำเร็จ: {e}")
-            st.session_state.transactions_list = []
+            st.sidebar.error(f"อ่านไฟล์ Excel ไม่สำเร็จ: {e}")
+            return pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
     else:
-        st.session_state.transactions_list = []
+        return pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
+
+# โหลดข้อมูลจริงขึ้นมาทำงาน
+df_current = load_data_from_excel()
 
 # ดึงอัตราแลกเปลี่ยนเงินตราปัจจุบัน (USDTHB)
 @st.cache_data(ttl=3600)
@@ -48,7 +49,7 @@ def get_fx_rate():
 fx_rate = get_fx_rate()
 
 # ==============================================================================
-# SIDEBAR: หน้าต่างจัดการธุรกรรม (UI สำหรับ Add / Delete)
+# SIDEBAR: หน้าต่างจัดการธุรกรรม (UI สำหรับ Add / Delete ลงไฟล์ Excel โดยตรง)
 # ==============================================================================
 st.sidebar.header("⚙️ Portfolio Management")
 show_manager = st.sidebar.checkbox("เปิดเมนูจัดการธุรกรรม (Add/Delete)")
@@ -69,39 +70,46 @@ if show_manager:
             
             submit_btn = st.form_submit_button("บันทึกข้อมูลธุรกรรม")
             if submit_btn and sym:
-                new_data = {
+                # บันทึกเป็นคอลัมน์ดั้งเดิมตามรูปแบบของ Excel ของผู้ใช้
+                new_row = pd.DataFrame([{
                     'Symbol': str(sym).upper().strip(),
                     'Side': str(side),
                     'Qty': float(qty),
-                    'Fill_Price': float(price),
+                    'Fill Price': float(price),       # ใช้ชื่อคอลัมน์ดั้งเดิมเพื่อเซฟลง Excel
                     'Commission': float(comm),
-                    'Closing_Time': str(date)
-                }
-                st.session_state.transactions_list.append(new_data)
-                st.success(f"บันทึกข้อมูลของ {sym.upper()} เรียบร้อยแล้ว!")
+                    'Closing Time': str(date)         # ใช้ชื่อคอลัมน์ดั้งเดิมเพื่อเซฟลง Excel
+                }])
+                
+                # โหลดข้อมูลดิบล่าสุดจากไฟล์มาต่อแถวเพื่อป้องกันการบันทึกทับซ้ำซ้อน
+                df_raw_excel = pd.read_excel(EXCEL_FILE) if os.path.exists(EXCEL_FILE) else pd.DataFrame()
+                df_updated = pd.concat([df_raw_excel, new_row], ignore_index=True)
+                
+                # สั่งเซฟลงไฟล์ Excel ทันที! ข้อมูลจะอยู่ถาวร
+                df_updated.to_excel(EXCEL_FILE, index=False)
+                st.success(f"บันทึกข้อมูล {sym.upper()} ลงไฟล์ Excel เรียบร้อยและถาวรแล้ว!")
                 st.rerun()
 
     # ส่วนตารางรายการล่าสุดเพื่อกดลบออก (DELETE)
-    if len(st.session_state.transactions_list) > 0:
+    if os.path.exists(EXCEL_FILE) and not df_current.empty:
         with st.expander("🗑️ ลบธุรกรรมที่บันทึกไว้ (Delete Transaction)"):
-            st.write("กดปุ่ม 'ลบ' ท้ายรายการที่ต้องการเอาออก:")
-            for idx in reversed(range(len(st.session_state.transactions_list))):
-                item = st.session_state.transactions_list[idx]
+            st.write("กดปุ่ม 'ลบ' ท้ายรายการที่ต้องการเอาออกจาก Excel:")
+            for idx in reversed(df_current.index):
+                item = df_current.loc[idx]
                 col_item, col_btn = st.columns([4, 1])
-                col_item.write(f"รายการที่ {idx}: **{item['Symbol']}** | {item['Side']} | Qty: {item['Qty']:,} | ราคา: {item['Fill_Price']:,}")
+                col_item.write(f"รายการ {idx}: **{item['Symbol']}** | {item['Side']} | Qty: {item['Qty']:,} | ราคา: {item['Fill_Price']:,}")
                 if col_btn.button("ลบ", key=f"del_item_{idx}"):
-                    st.session_state.transactions_list.pop(idx)
-                    st.success(f"ลบรายการลำดับที่ {idx} เรียบร้อย!")
+                    # โหลดข้อมูลดิบมาลบแถวออกและเซฟกลับซ้ำ
+                    df_raw_excel = pd.read_excel(EXCEL_FILE)
+                    df_raw_excel = df_raw_excel.drop(idx).reset_index(drop=True)
+                    df_raw_excel.to_excel(EXCEL_FILE, index=False)
+                    st.success(f"ลบรายการลำดับที่ {idx} ออกจาก Excel สำเร็จ!")
                     st.rerun()
     st.markdown("---")
 
 # ==============================================================================
 # MAIN DASHBOARD: คำนวณผลและแสดงกราฟหน้าจอหลัก
 # ==============================================================================
-if len(st.session_state.transactions_list) > 0:
-    df_raw = pd.DataFrame(st.session_state.transactions_list)
-else:
-    df_raw = pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
+df_raw = df_current.copy()
 
 if not df_raw.empty:
     df_buy = df_raw[df_raw['Side'] == 'Buy'].copy()
@@ -131,35 +139,20 @@ if not df_raw.empty:
         portfolio = portfolio.merge(div_summary, on='Symbol', how='left')
         portfolio['Total_Dividend'] = portfolio['Total_Dividend'].fillna(0)
         
-        # 🚀 เปลี่ยนมาใช้ระบบดึงราคาแบบ yf.Tickers ร่วมกับ fast_info เพื่อความแม่นยำสูงสุดบนระบบคลาวด์
-        with st.spinner('กำลังอัปเดตราคาหุ้นล่าสุดแบบเรียลไทม์...'):
+        # 🏎️ ปรับระบบดึงราคาเป็นแบบสุ่มตรวจดึงเดี่ยววนรอบเพื่อแก้ปัญหา Timezone บนหน้าคลาวด์หลุดเป็น 0
+        with st.spinner('กำลังดึงข้อมูลราคาสดจากตลาดหุ้น...'):
             prices = []
-            symbol_list = portfolio['YF_Symbol'].tolist()
-            
-            if symbol_list:
+            for s in portfolio['YF_Symbol']:
+                last_price = 0
                 try:
-                    # เรียกดึงข้อมูลกลุ่มตัวแปรหลักด้วยคำสั่งเดี่ยว
-                    tickers_group = yf.Tickers(" ".join(symbol_list))
-                    for s in symbol_list:
-                        try:
-                            # ดึงราคาปัจจุบันโดยตรงผ่าน fast_info (ไม่ติดปัญหาเรื่องเหลื่อมเวลาของแท่งเทียน)
-                            last_price = tickers_group.tickers[s].fast_info['last_price']
-                        except:
-                            try:
-                                last_price = yf.Ticker(s).history(period="1d")['Close'].iloc[-1]
-                            except:
-                                last_price = 0
-                        
-                        # หากดึงไม่ได้จริงๆ ค่อยประคองราคาด้วยราคาเฉลี่ยของเรา
-                        if pd.isna(last_price) or last_price <= 0:
-                            avg_p = portfolio[portfolio['YF_Symbol'] == s]['Avg_Price'].values[0]
-                            prices.append(avg_p)
-                        else:
-                            prices.append(last_price)
+                    ticker_obj = yf.Ticker(s)
+                    # ใช้ fast_info เป็นหลัก ถ้าไม่ได้ให้ถอยไปใช้ประวัติวันล่าสุด
+                    last_price = ticker_obj.fast_info['last_price']
+                    if pd.isna(last_price) or last_price <= 0:
+                        last_price = ticker_obj.history(period="1d")['Close'].iloc[-1]
                 except:
-                    prices = portfolio['Avg_Price'].tolist()
-            else:
-                prices = []
+                    last_price = 0
+                prices.append(last_price)
                 
             portfolio['Current_Price'] = prices
 
@@ -170,7 +163,7 @@ if not df_raw.empty:
         portfolio['Dividend_THB'] = portfolio.apply(lambda x: x['Total_Dividend'] * fx_rate if ".BK" not in x['YF_Symbol'] else x['Total_Dividend'], axis=1)
         
         portfolio['PL_THB'] = portfolio['Value_THB'] - portfolio['Cost_THB']
-        portfolio['PL_Percent'] = (portfolio['PL_THB'] / portfolio['Cost_THB']) * 100
+        portfolio['PL_Percent'] = (portfolio['PL_THB'] / portfolio['Cost_THB']) * 100 if portfolio['Cost_THB'].sum() > 0 else 0
         
         total_val_thb = portfolio['Value_THB'].sum()
         total_cost_thb = portfolio['Cost_THB'].sum()
@@ -187,7 +180,7 @@ if not df_raw.empty:
             st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Equity (มูลค่าพอร์ตปัจจุบัน)</p><p style="color: #ffffff; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_val_thb:,.2f}</p><p style="color: #787b86; font-size: 18px; margin: 2px 0 0 0;">${total_val_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
         with col2:
             pl_color = "#089981" if total_pl_thb >= 0 else "#f23645"
-            st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Profit/Loss (กำไร/ขาดทุนรวม)</p><p style="color: {pl_color}; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_pl_thb:,.2f} <span style="font-size: 18px; font-weight: 500;">({total_pl_percent:+.2f}%)</span></p><p style="color: {pl_color}; opacity: 0.8; font-size: 18px; margin: 2px 0 0 0;">${total_pl_usd:,.2f} <span style="font-size: 14px; color: #787b86;">USD</span></p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Profit/Loss (กำไร/ขาดทุนรวม)</p><p style="color: {pl_color}; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_pl_thb:,.2f} <span style="font-size: 18px; font-weight: 500;">({total_pl_percent:+.2f}%)</span></p><p style="color: {pl_color}; opacity: 0.8; font-size: 18px; margin: 2px 0 0 0;">${total_pl_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
         with col3:
             st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Dividends (ปันผลรับรวม)</p><p style="color: #ffffff; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_dist_div_thb:,.2f}</p><p style="color: #787b86; font-size: 18px; margin: 2px 0 0 0;">${total_dist_div_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
         
