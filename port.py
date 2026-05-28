@@ -2,13 +2,15 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import glob
 import os
 
 # 1. การตั้งค่าหน้าจอแบบ Wide-screen
-st.set_page_config(layout="wide", page_title="Karn Stock Portfolio")
+st.set_page_config(layout="wide", page_title="My Stock Portfolio")
 
-st.title("📊 Karn Stock Terminal")
+st.title("📊 กานต์ Stock Terminal")
 
 # 🔍 ค้นหาไฟล์ Excel ในโปรเจกต์อัตโนมัติ
 @st.cache_resource
@@ -35,7 +37,7 @@ def load_data_from_excel():
     else:
         return pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
 
-# โหลดข้อมูลจริงขึ้นมาทำงาน
+# โโหลดข้อมูลจริงขึ้นมาทำงาน
 df_current = load_data_from_excel()
 
 # 💱 ดึงอัตราแลกเปลี่ยนเงินตราปัจจุบัน (USDTHB) พร้อม Cache 1 ชั่วโมง
@@ -79,6 +81,82 @@ def fetch_stock_prices(symbol_list):
                 
     return prices_dict
 
+# 📈 [ฟังก์ชันเพิ่มใหม่ใน Phase 3] สำหรับคำนวณและสร้างเทคนิคอลกราฟ (EMA / RSI)
+def draw_technical_chart(symbol, period_choice):
+    try:
+        # ดึงข้อมูลราคาย้อนหลังตามที่เลือก
+        stock = yf.Ticker(symbol)
+        df_hist = stock.history(period=period_choice)
+        
+        if df_hist.empty or len(df_hist) < 20:
+            st.warning(f"ข้อมูลหุ้น {symbol} มีไม่เพียงพอสำหรับการคำนวณเส้นเทคนิคอลในกรอบเวลานี้")
+            return
+
+        # 1. คำนวณเส้น Exponential Moving Average (EMA 20)
+        df_hist['EMA_20'] = df_hist['Close'].ewm(span=20, adjust=False).mean()
+
+        # 2. คำนวณดัชนี Relative Strength Index (RSI 14)
+        delta = df_hist['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df_hist['RSI_14'] = 100 - (100 / (1 + rs))
+
+        # สร้างกราฟ 2 ชั้น (แถวที่ 1 กราฟแท่งเทียน, แถวที่ 2 กราฟ RSI)
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                            vertical_spacing=0.1, 
+                            row_heights=[0.7, 0.3])
+
+        # ชั้นที่ 1: ใส่กราฟแท่งเทียน (Candlestick)
+        fig.add_trace(go.Candlestick(
+            x=df_hist.index,
+            open=df_hist['Open'],
+            high=df_hist['High'],
+            low=df_hist['Low'],
+            close=df_hist['Close'],
+            name="Candlestick"
+        ), row=1, col=1)
+
+        # ชั้นที่ 1: เพิ่มเส้น EMA 20 (สีส้มเส้นหนา)
+        fig.add_trace(go.Scatter(
+            x=df_hist.index,
+            y=df_hist['EMA_20'],
+            mode='lines',
+            line=dict(color='#ff9900', width=1.5),
+            name='EMA (20)'
+        ), row=1, col=1)
+
+        # ชั้นที่ 2: เพิ่มกราฟ RSI (สีม่วง)
+        fig.add_trace(go.Scatter(
+            x=df_hist.index,
+            y=df_hist['RSI_14'],
+            mode='lines',
+            line=dict(color='#9b5de5', width=1.5),
+            name='RSI (14)'
+        ), row=2, col=1)
+
+        # ชั้นที่ 2: วาดเส้นประแนวรับแนวต้านของ RSI (30 Overbought / 70 Oversold)
+        fig.add_hline(y=70, line_dash="dash", line_color="#ff3b30", opacity=0.5, row=2, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="#00b074", opacity=0.5, row=2, col=1)
+
+        # ปรับแต่งหน้าตาให้ธีมมืดดุดันสไตล์ TradingView
+        fig.update_layout(
+            title=f"📈 กราฟเทคนิคอลแบบเรียลไทม์: {symbol} ({period_choice})",
+            xaxis_rangeslider_visible=False,
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='#131722',
+            yaxis=dict(gridcolor='#2a2e39', title="ราคาหุ้น"),
+            yaxis2=dict(gridcolor='#2a2e39', title="RSI", range=[10, 90]),
+            xaxis=dict(gridcolor='#2a2e39'),
+            height=600,
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"ไม่สามารถโหลดกราฟของหุ้น {symbol} ได้ในขณะนี้: {e}")
+
 # ==============================================================================
 # SIDEBAR: หน้าต่างจัดการธุรกรรม
 # ==============================================================================
@@ -113,7 +191,7 @@ if show_manager:
                 df_updated = pd.concat([df_raw_excel, new_row], ignore_index=True)
                 df_updated.to_excel(EXCEL_FILE, index=False)
                 
-                st.cache_data.clear() # ล้างแคชเพื่อให้ราคาหุ้นตัวใหม่อัปเดตทันที
+                st.cache_data.clear() 
                 st.success(f"บันทึกข้อมูล {sym.upper()} ลงไฟล์ Excel เรียบร้อยแล้ว!")
                 st.rerun()
 
@@ -188,44 +266,32 @@ if not df_raw.empty:
         portfolio['PL_THB'] = portfolio['Value_THB'] - portfolio['Cost_THB']
         portfolio['PL_Percent'] = (portfolio['PL_THB'] / portfolio['Cost_THB']) * 100 if portfolio['Cost_THB'].sum() > 0 else 0
         
-        # 📊 คำนวณตัวเลขสำหรับ 4 กล่องสไตล์ TradingView
+        # 📊 ตัวเลขสำหรับ 4 กล่อง TradingView
         total_val_thb = portfolio['Value_THB'].sum()
         total_cost_thb = portfolio['Cost_THB'].sum()
-        
-        # 1. กำไรที่ยังไม่รับรู้ (Unrealized P/L) วิ่งตามราคากลางตลาด ณ ตอนนั้น
         unrealized_pl_thb = portfolio['PL_THB'].sum()
         unrealized_pl_percent = (unrealized_pl_thb / total_cost_thb) * 100 if total_cost_thb > 0 else 0
-        
-        # 2. กำไรที่รับรู้แล้ว (Realized P/L) ในระบบนี้คือปันผลที่เข้าบัญชีชัวร์ๆ แล้ว
         total_dist_div_thb = portfolio['Dividend_THB'].sum()
         realized_pl_thb = total_dist_div_thb 
-        
-        # 3. กำไรทั้งหมดรวม (Total P/L) = กำไรหุ้น + ปันผล
         all_pl_thb = unrealized_pl_thb + realized_pl_thb
         all_pl_percent = (all_pl_thb / total_cost_thb) * 100 if total_cost_thb > 0 else 0
         
-        # แปลงค่าเป็นหน่วย USD แถวสอง
         total_val_usd = total_val_thb / fx_rate
         unrealized_pl_usd = unrealized_pl_thb / fx_rate
         realized_pl_usd = realized_pl_thb / fx_rate
         all_pl_usd = all_pl_thb / fx_rate
 
-        # 🎨 สร้าง 4 กล่องสไตล์แดชบอร์ด TradingView (Responsive UI ลื่นๆ)
+        # 🎨 สร้าง 4 กล่องแดชบอร์ด
         col1, col2, col3, col4 = st.columns(4)
-        
         with col1:
             st.markdown(f'<div style="background-color: #1c2030; padding: 18px; border-radius: 8px; border: 1px solid #2d3247;"><p style="color: #848e9c; font-size: 13px; margin: 0; font-weight: 500;">มูลค่าพอร์ตโฟลิโอ (Equity)</p><p style="color: #ffffff; font-size: 26px; font-weight: 700; margin: 8px 0 0 0;">฿{total_val_thb:,.2f}</p><p style="color: #848e9c; font-size: 15px; margin: 2px 0 0 0;">${total_val_usd:,.2f} <span style="font-size: 12px;">USD</span></p></div>', unsafe_allow_html=True)
-        
         with col2:
             unreal_color = "#00b074" if unrealized_pl_thb >= 0 else "#ff3b30"
             unreal_sign = "+" if unrealized_pl_thb >= 0 else ""
             st.markdown(f'<div style="background-color: #1c2030; padding: 18px; border-radius: 8px; border: 1px solid #2d3247;"><p style="color: #848e9c; font-size: 13px; margin: 0; font-weight: 500;">กำไรที่ยังไม่รับรู้ (Unrealized P/L)</p><p style="color: {unreal_color}; font-size: 26px; font-weight: 700; margin: 8px 0 0 0;">{unreal_sign}฿{unrealized_pl_thb:,.2f}</p><p style="color: {unreal_color}; opacity: 0.9; font-size: 15px; margin: 2px 0 0 0;">{unreal_sign}{unrealized_pl_percent:+.2f}% (${unrealized_pl_usd:,.2f})</p></div>', unsafe_allow_html=True)
-        
         with col3:
-            # ยอดปันผลสะสมเข้ากระเป๋า ถือเป็นกำไรที่ล็อกเข้าพอร์ตชัวร์ๆ แล้ว (Realized)
             real_color = "#00b074" if realized_pl_thb > 0 else "#848e9c"
             st.markdown(f'<div style="background-color: #1c2030; padding: 18px; border-radius: 8px; border: 1px solid #2d3247;"><p style="color: #848e9c; font-size: 13px; margin: 0; font-weight: 500;">กำไรที่รับรู้แล้ว (Realized P/L)</p><p style="color: {real_color}; font-size: 26px; font-weight: 700; margin: 8px 0 0 0;">฿{realized_pl_thb:,.2f}</p><p style="color: {real_color}; opacity: 0.9; font-size: 15px; margin: 2px 0 0 0;">+100.00% (${realized_pl_usd:,.2f})</p></div>', unsafe_allow_html=True)
-        
         with col4:
             all_color = "#00b074" if all_pl_thb >= 0 else "#ff3b30"
             all_sign = "+" if all_pl_thb >= 0 else ""
@@ -241,9 +307,32 @@ if not df_raw.empty:
         st.dataframe(table_show.style.format({'Qty': '{:,.6f}', 'Avg Price': '{:,.2f}', 'Last Price': '{:,.2f}', 'Current Value': '฿{:,.2f}', 'P/L (THB)': '฿{:,.2f}', 'P/L %': '{:+.2f}%', 'Dividends Received': '฿{:,.2f}'}).map(style_pl, subset=['P/L (THB)', 'P/L %']), use_container_width=True)
 
         st.write("---")
-        st.subheader("🎯 สัดส่วนการลงทุน (Portfolio Allocation)")
-        fig = px.pie(portfolio, values='Value_THB', names='Symbol', hole=0.4)
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig, use_container_width=True)
+        
+        # 🎯 ==============================================================================
+        # PHASE 3: INTERACTIVE CHARTS & TECHNICAL ANALYTICS SECTION
+        # ==============================================================================
+        st.subheader("🎯 การวิเคราะห์ทางเทคนิครายหุ้น (Interactive Technical Charts)")
+        
+        # สร้างคอลัมน์ย่อยสำหรับให้เลือกหุ้นและกรอบเวลาด้านล่างพอร์ต
+        chart_col1, chart_col2 = st.columns([2, 2])
+        
+        with chart_col1:
+            # ดึงรายชื่อหุ้นที่มีอยู่จริงในพอร์ตมาเป็นตัวเลือกคลิก
+            available_stocks = portfolio['YF_Symbol'].tolist()
+            selected_stock = st.selectbox("🔍 เลือกหุ้นในพอร์ตที่ต้องการเปิดกราฟเทคนิคอล:", available_stocks)
+            
+        with chart_col2:
+            # ทางเลือกช่วงเวลาดูย้อนหลัง
+            time_period = st.selectbox("📅 เลือกช่วงเวลาข้อมูลย้อนหลัง (Time Horizon):", ["3mo", "6mo", "1y", "2y", "1mo"], index=0)
+            
+        # สั่งวาดกราฟแบบเรียลไทม์ทันทีที่มีการคลิกเปลี่ยนตัวแปร
+        if selected_stock:
+            draw_technical_chart(selected_stock, time_period)
+            
+        st.write("---")
+        st.subheader("🥧 สัดส่วนการลงทุน (Portfolio Allocation)")
+        fig_pie = px.pie(portfolio, values='Value_THB', names='Symbol', hole=0.4)
+        fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig_pie, use_container_width=True)
 else:
     st.info("💡 ไม่พบข้อมูลธุรกรรมในพอร์ต กรุณาคลิกเลือก 'เปิดเมนูจัดการธุรกรรม' ที่เมนูด้านซ้ายเพื่อเริ่มต้นบันทึกหุ้นตัวแรกของคุณครับ")
