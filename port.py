@@ -6,7 +6,7 @@ import glob
 import os
 
 # 1. การตั้งค่าหน้าจอแบบ Wide-screen
-st.set_page_config(layout="wide", page_title="My Stock Portfolio")
+st.set_page_config(layout="wide", page_title="Karn Stock Portfolio")
 
 st.title("📊 My Custom Stock Terminal")
 
@@ -35,7 +35,7 @@ def load_data_from_excel():
     else:
         return pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
 
-# โโหลดข้อมูลจริงขึ้นมาทำงาน
+# โหลดข้อมูลจริงขึ้นมาทำงาน
 df_current = load_data_from_excel()
 
 # 💱 ดึงอัตราแลกเปลี่ยนเงินตราปัจจุบัน (USDTHB) พร้อม Cache 1 ชั่วโมง
@@ -48,7 +48,7 @@ def get_fx_rate():
 
 fx_rate = get_fx_rate()
 
-# 🏎️ 🔥 [ระบบใหม่] ฟังก์ชันดึงราคาหุ้นกลุ่มความเร็วสูง พร้อมระบบ Cache ป้องกันราคาเป็น 0 (จำค่า 5 นาที)
+# 🏎️ ฟังก์ชันดึงราคาหุ้นกลุ่มความเร็วสูง พร้อมระบบ Cache ป้องกันราคาเป็น 0 (จำค่า 5 นาที)
 @st.cache_data(ttl=300)
 def fetch_stock_prices(symbol_list):
     prices_dict = {}
@@ -56,25 +56,20 @@ def fetch_stock_prices(symbol_list):
         return prices_dict
         
     try:
-        # ใช้คำสั่ง Tickers พ่วง s เพื่อดึงรวดเดียวพร้อมกัน ช่วยลดโอกาสโดนบล็อก
         tickers_group = yf.Tickers(" ".join(symbol_list))
         for s in symbol_list:
             try:
-                # ดึงราคาสดผ่าน fast_info
                 last_price = tickers_group.tickers[s].fast_info['last_price']
                 if pd.isna(last_price) or last_price <= 0:
-                    # แผนสำรอง 1: ดึงจาก history วันล่าสุด
                     last_price = tickers_group.tickers[s].history(period="1d")['Close'].iloc[-1]
             except:
                 try:
-                    # แผนสำรอง 2: ดึงแบบเดี่ยว
                     last_price = yf.Ticker(s).fast_info['last_price']
                 except:
                     last_price = 0
             
             prices_dict[s] = last_price if (not pd.isna(last_price) and last_price > 0) else 0
     except:
-        # หากระบบดึงกลุ่มล่ม ให้พยายามดึงทีละตัวสั้น ๆ
         for s in symbol_list:
             try:
                 p = yf.Ticker(s).fast_info['last_price']
@@ -85,7 +80,7 @@ def fetch_stock_prices(symbol_list):
     return prices_dict
 
 # ==============================================================================
-# SIDEBAR: หน้าต่างจัดการธุรกรรม (UI สำหรับ Add / Delete ลงไฟล์ Excel โดยตรง)
+# SIDEBAR: หน้าต่างจัดการธุรกรรม
 # ==============================================================================
 st.sidebar.header("⚙️ Portfolio Management")
 show_manager = st.sidebar.checkbox("เปิดเมนูจัดการธุรกรรม (Add/Delete)")
@@ -94,7 +89,6 @@ if show_manager:
     st.markdown("---")
     st.subheader("🛠️ การจัดการธุรกรรมหุ้น")
     
-    # ส่วนฟอร์มสำหรับเพิ่มข้อมูลธุรกรรมใหม่ (ADD)
     with st.expander("➕ เพิ่มธุรกรรมใหม่ (Add Transaction)", expanded=False):
         with st.form("add_form", clear_on_submit=True):
             sym = st.text_input("สัญลักษณ์หุ้น (เช่น SET:PTT หรือ NASDAQ:AAPL)").strip()
@@ -119,13 +113,10 @@ if show_manager:
                 df_updated = pd.concat([df_raw_excel, new_row], ignore_index=True)
                 df_updated.to_excel(EXCEL_FILE, index=False)
                 
-                # ล้างแคชราคาเก่าทันทีเมื่อมีหุ้นใหม่เพิ่มเข้ามา เพื่อบังคับให้ระบบไปดึงราคาสดของหุ้นตัวใหม่ด้วย
-                st.cache_data.clear()
-                
+                st.cache_data.clear() # ล้างแคชเพื่อให้ราคาหุ้นตัวใหม่อัปเดตทันที
                 st.success(f"บันทึกข้อมูล {sym.upper()} ลงไฟล์ Excel เรียบร้อยแล้ว!")
                 st.rerun()
 
-    # ส่วนตารางรายการล่าสุดเพื่อกดลบออก (DELETE)
     if os.path.exists(EXCEL_FILE) and not df_current.empty:
         with st.expander("🗑️ ลบธุรกรรมที่บันทึกไว้ (Delete Transaction)"):
             st.write("กดปุ่ม 'ลบ' ท้ายรายการที่ต้องการเอาออกจาก Excel:")
@@ -137,7 +128,7 @@ if show_manager:
                     df_raw_excel = pd.read_excel(EXCEL_FILE)
                     df_raw_excel = df_raw_excel.drop(idx).reset_index(drop=True)
                     df_raw_excel.to_excel(EXCEL_FILE, index=False)
-                    st.cache_data.clear() # ล้างแคชเมื่อข้อมูลเปลี่ยน
+                    st.cache_data.clear()
                     st.success(f"ลบรายการลำดับที่ {idx} สำเร็จ!")
                     st.rerun()
     st.markdown("---")
@@ -175,12 +166,10 @@ if not df_raw.empty:
         portfolio = portfolio.merge(div_summary, on='Symbol', how='left')
         portfolio['Total_Dividend'] = portfolio['Total_Dividend'].fillna(0)
         
-        # 🏎️ เรียกใช้งานระบบดึงราคาผ่าน Cache
         with st.spinner('กำลังโหลดข้อมูลราคาสดจากตลาดหุ้น...'):
             symbol_list = portfolio['YF_Symbol'].tolist()
             cached_prices = fetch_stock_prices(symbol_list)
             
-            # แมปราคากลับเข้าตารางพอร์ต หากตัวไหนราคาหลุดเป็น 0 ให้เอา Avg_Price ประคองแทนหน้าจอแดง
             prices = []
             for s in symbol_list:
                 p_val = cached_prices.get(s, 0)
@@ -199,24 +188,48 @@ if not df_raw.empty:
         portfolio['PL_THB'] = portfolio['Value_THB'] - portfolio['Cost_THB']
         portfolio['PL_Percent'] = (portfolio['PL_THB'] / portfolio['Cost_THB']) * 100 if portfolio['Cost_THB'].sum() > 0 else 0
         
+        # 📊 คำนวณตัวเลขสำหรับ 4 กล่องสไตล์ TradingView
         total_val_thb = portfolio['Value_THB'].sum()
         total_cost_thb = portfolio['Cost_THB'].sum()
-        total_pl_thb = portfolio['PL_THB'].sum()
-        total_pl_percent = (total_pl_thb / total_cost_thb) * 100 if total_cost_thb > 0 else 0
+        
+        # 1. กำไรที่ยังไม่รับรู้ (Unrealized P/L) วิ่งตามราคากลางตลาด ณ ตอนนั้น
+        unrealized_pl_thb = portfolio['PL_THB'].sum()
+        unrealized_pl_percent = (unrealized_pl_thb / total_cost_thb) * 100 if total_cost_thb > 0 else 0
+        
+        # 2. กำไรที่รับรู้แล้ว (Realized P/L) ในระบบนี้คือปันผลที่เข้าบัญชีชัวร์ๆ แล้ว
         total_dist_div_thb = portfolio['Dividend_THB'].sum()
+        realized_pl_thb = total_dist_div_thb 
         
+        # 3. กำไรทั้งหมดรวม (Total P/L) = กำไรหุ้น + ปันผล
+        all_pl_thb = unrealized_pl_thb + realized_pl_thb
+        all_pl_percent = (all_pl_thb / total_cost_thb) * 100 if total_cost_thb > 0 else 0
+        
+        # แปลงค่าเป็นหน่วย USD แถวสอง
         total_val_usd = total_val_thb / fx_rate
-        total_pl_usd = total_pl_thb / fx_rate
-        total_dist_div_usd = total_dist_div_thb / fx_rate
+        unrealized_pl_usd = unrealized_pl_thb / fx_rate
+        realized_pl_usd = realized_pl_thb / fx_rate
+        all_pl_usd = all_pl_thb / fx_rate
+
+        # 🎨 สร้าง 4 กล่องสไตล์แดชบอร์ด TradingView (Responsive UI ลื่นๆ)
+        col1, col2, col3, col4 = st.columns(4)
         
-        col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Equity (มูลค่าพอร์ตปัจจุบัน)</p><p style="color: #ffffff; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_val_thb:,.2f}</p><p style="color: #787b86; font-size: 18px; margin: 2px 0 0 0;">${total_val_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="background-color: #1c2030; padding: 18px; border-radius: 8px; border: 1px solid #2d3247;"><p style="color: #848e9c; font-size: 13px; margin: 0; font-weight: 500;">มูลค่าพอร์ตโฟลิโอ (Equity)</p><p style="color: #ffffff; font-size: 26px; font-weight: 700; margin: 8px 0 0 0;">฿{total_val_thb:,.2f}</p><p style="color: #848e9c; font-size: 15px; margin: 2px 0 0 0;">${total_val_usd:,.2f} <span style="font-size: 12px;">USD</span></p></div>', unsafe_allow_html=True)
+        
         with col2:
-            pl_color = "#089981" if total_pl_thb >= 0 else "#f23645"
-            st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Profit/Loss (กำไร/ขาดทุนรวม)</p><p style="color: {pl_color}; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_pl_thb:,.2f} <span style="font-size: 18px; font-weight: 500;">({total_pl_percent:+.2f}%)</span></p><p style="color: {pl_color}; opacity: 0.8; font-size: 18px; margin: 2px 0 0 0;">${total_pl_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
+            unreal_color = "#00b074" if unrealized_pl_thb >= 0 else "#ff3b30"
+            unreal_sign = "+" if unrealized_pl_thb >= 0 else ""
+            st.markdown(f'<div style="background-color: #1c2030; padding: 18px; border-radius: 8px; border: 1px solid #2d3247;"><p style="color: #848e9c; font-size: 13px; margin: 0; font-weight: 500;">กำไรที่ยังไม่รับรู้ (Unrealized P/L)</p><p style="color: {unreal_color}; font-size: 26px; font-weight: 700; margin: 8px 0 0 0;">{unreal_sign}฿{unrealized_pl_thb:,.2f}</p><p style="color: {unreal_color}; opacity: 0.9; font-size: 15px; margin: 2px 0 0 0;">{unreal_sign}{unrealized_pl_percent:+.2f}% (${unrealized_pl_usd:,.2f})</p></div>', unsafe_allow_html=True)
+        
         with col3:
-            st.markdown(f'<div style="background-color: #1e222d; padding: 20px; border-radius: 10px; border: 1px solid #2a2e39;"><p style="color: #cfd4e0; font-size: 14px; margin: 0; text-transform: uppercase;">Total Dividends (ปันผลรับรวม)</p><p style="color: #ffffff; font-size: 30px; font-weight: 700; margin: 10px 0 0 0;">฿{total_dist_div_thb:,.2f}</p><p style="color: #787b86; font-size: 18px; margin: 2px 0 0 0;">${total_dist_div_usd:,.2f} <span style="font-size: 14px;">USD</span></p></div>', unsafe_allow_html=True)
+            # ยอดปันผลสะสมเข้ากระเป๋า ถือเป็นกำไรที่ล็อกเข้าพอร์ตชัวร์ๆ แล้ว (Realized)
+            real_color = "#00b074" if realized_pl_thb > 0 else "#848e9c"
+            st.markdown(f'<div style="background-color: #1c2030; padding: 18px; border-radius: 8px; border: 1px solid #2d3247;"><p style="color: #848e9c; font-size: 13px; margin: 0; font-weight: 500;">กำไรที่รับรู้แล้ว (Realized P/L)</p><p style="color: {real_color}; font-size: 26px; font-weight: 700; margin: 8px 0 0 0;">฿{realized_pl_thb:,.2f}</p><p style="color: {real_color}; opacity: 0.9; font-size: 15px; margin: 2px 0 0 0;">+100.00% (${realized_pl_usd:,.2f})</p></div>', unsafe_allow_html=True)
+        
+        with col4:
+            all_color = "#00b074" if all_pl_thb >= 0 else "#ff3b30"
+            all_sign = "+" if all_pl_thb >= 0 else ""
+            st.markdown(f'<div style="background-color: #1c2030; padding: 18px; border-radius: 8px; border: 1px solid #2d3247;"><p style="color: #848e9c; font-size: 13px; margin: 0; font-weight: 500;">กำไรทั้งหมด (Total P/L)</p><p style="color: {all_color}; font-size: 26px; font-weight: 700; margin: 8px 0 0 0;">{all_sign}฿{all_pl_thb:,.2f}</p><p style="color: {all_color}; opacity: 0.9; font-size: 15px; margin: 2px 0 0 0;">{all_sign}{all_pl_percent:+.2f}% (${all_pl_usd:,.2f})</p></div>', unsafe_allow_html=True)
         
         st.write("---")
 
