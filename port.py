@@ -16,11 +16,11 @@ def find_excel_file():
     excel_files = glob.glob("My portfolio_*.xlsx") + glob.glob("portfolio.xlsx")
     if excel_files:
         return excel_files[0]
-    return "portfolio.xlsx"  # ถ้าไม่เจอเลย ให้ใช้ชื่อนี้เป็นตัวตั้งต้น
+    return "portfolio.xlsx"
 
 EXCEL_FILE = find_excel_file()
 
-# 📦 ฟังก์ชันสำหรับโหลดข้อมูลจาก Excel สดใหม่ทุกครั้ง (ไม่ใช้ Cache ค้างใน Session ยาวๆ เพื่อลดบั๊กตอนรีเฟรช)
+# 📦 ฟังก์ชันสำหรับโหลดข้อมูลจาก Excel สดใหม่
 def load_data_from_excel():
     if os.path.exists(EXCEL_FILE):
         try:
@@ -35,10 +35,10 @@ def load_data_from_excel():
     else:
         return pd.DataFrame(columns=['Symbol', 'Side', 'Qty', 'Fill_Price', 'Commission', 'Closing_Time'])
 
-# โหลดข้อมูลจริงขึ้นมาทำงาน
+# โโหลดข้อมูลจริงขึ้นมาทำงาน
 df_current = load_data_from_excel()
 
-# ดึงอัตราแลกเปลี่ยนเงินตราปัจจุบัน (USDTHB)
+# 💱 ดึงอัตราแลกเปลี่ยนเงินตราปัจจุบัน (USDTHB) พร้อม Cache 1 ชั่วโมง
 @st.cache_data(ttl=3600)
 def get_fx_rate():
     try: 
@@ -47,6 +47,42 @@ def get_fx_rate():
         return 36.5
 
 fx_rate = get_fx_rate()
+
+# 🏎️ 🔥 [ระบบใหม่] ฟังก์ชันดึงราคาหุ้นกลุ่มความเร็วสูง พร้อมระบบ Cache ป้องกันราคาเป็น 0 (จำค่า 5 นาที)
+@st.cache_data(ttl=300)
+def fetch_stock_prices(symbol_list):
+    prices_dict = {}
+    if not symbol_list:
+        return prices_dict
+        
+    try:
+        # ใช้คำสั่ง Tickers พ่วง s เพื่อดึงรวดเดียวพร้อมกัน ช่วยลดโอกาสโดนบล็อก
+        tickers_group = yf.Tickers(" ".join(symbol_list))
+        for s in symbol_list:
+            try:
+                # ดึงราคาสดผ่าน fast_info
+                last_price = tickers_group.tickers[s].fast_info['last_price']
+                if pd.isna(last_price) or last_price <= 0:
+                    # แผนสำรอง 1: ดึงจาก history วันล่าสุด
+                    last_price = tickers_group.tickers[s].history(period="1d")['Close'].iloc[-1]
+            except:
+                try:
+                    # แผนสำรอง 2: ดึงแบบเดี่ยว
+                    last_price = yf.Ticker(s).fast_info['last_price']
+                except:
+                    last_price = 0
+            
+            prices_dict[s] = last_price if (not pd.isna(last_price) and last_price > 0) else 0
+    except:
+        # หากระบบดึงกลุ่มล่ม ให้พยายามดึงทีละตัวสั้น ๆ
+        for s in symbol_list:
+            try:
+                p = yf.Ticker(s).fast_info['last_price']
+                prices_dict[s] = p if p > 0 else 0
+            except:
+                prices_dict[s] = 0
+                
+    return prices_dict
 
 # ==============================================================================
 # SIDEBAR: หน้าต่างจัดการธุรกรรม (UI สำหรับ Add / Delete ลงไฟล์ Excel โดยตรง)
@@ -70,23 +106,23 @@ if show_manager:
             
             submit_btn = st.form_submit_button("บันทึกข้อมูลธุรกรรม")
             if submit_btn and sym:
-                # บันทึกเป็นคอลัมน์ดั้งเดิมตามรูปแบบของ Excel ของผู้ใช้
                 new_row = pd.DataFrame([{
                     'Symbol': str(sym).upper().strip(),
                     'Side': str(side),
                     'Qty': float(qty),
-                    'Fill Price': float(price),       # ใช้ชื่อคอลัมน์ดั้งเดิมเพื่อเซฟลง Excel
+                    'Fill Price': float(price),       
                     'Commission': float(comm),
-                    'Closing Time': str(date)         # ใช้ชื่อคอลัมน์ดั้งเดิมเพื่อเซฟลง Excel
+                    'Closing Time': str(date)         
                 }])
                 
-                # โหลดข้อมูลดิบล่าสุดจากไฟล์มาต่อแถวเพื่อป้องกันการบันทึกทับซ้ำซ้อน
                 df_raw_excel = pd.read_excel(EXCEL_FILE) if os.path.exists(EXCEL_FILE) else pd.DataFrame()
                 df_updated = pd.concat([df_raw_excel, new_row], ignore_index=True)
-                
-                # สั่งเซฟลงไฟล์ Excel ทันที! ข้อมูลจะอยู่ถาวร
                 df_updated.to_excel(EXCEL_FILE, index=False)
-                st.success(f"บันทึกข้อมูล {sym.upper()} ลงไฟล์ Excel เรียบร้อยและถาวรแล้ว!")
+                
+                # ล้างแคชราคาเก่าทันทีเมื่อมีหุ้นใหม่เพิ่มเข้ามา เพื่อบังคับให้ระบบไปดึงราคาสดของหุ้นตัวใหม่ด้วย
+                st.cache_data.clear()
+                
+                st.success(f"บันทึกข้อมูล {sym.upper()} ลงไฟล์ Excel เรียบร้อยแล้ว!")
                 st.rerun()
 
     # ส่วนตารางรายการล่าสุดเพื่อกดลบออก (DELETE)
@@ -98,11 +134,11 @@ if show_manager:
                 col_item, col_btn = st.columns([4, 1])
                 col_item.write(f"รายการ {idx}: **{item['Symbol']}** | {item['Side']} | Qty: {item['Qty']:,} | ราคา: {item['Fill_Price']:,}")
                 if col_btn.button("ลบ", key=f"del_item_{idx}"):
-                    # โหลดข้อมูลดิบมาลบแถวออกและเซฟกลับซ้ำ
                     df_raw_excel = pd.read_excel(EXCEL_FILE)
                     df_raw_excel = df_raw_excel.drop(idx).reset_index(drop=True)
                     df_raw_excel.to_excel(EXCEL_FILE, index=False)
-                    st.success(f"ลบรายการลำดับที่ {idx} ออกจาก Excel สำเร็จ!")
+                    st.cache_data.clear() # ล้างแคชเมื่อข้อมูลเปลี่ยน
+                    st.success(f"ลบรายการลำดับที่ {idx} สำเร็จ!")
                     st.rerun()
     st.markdown("---")
 
@@ -139,20 +175,18 @@ if not df_raw.empty:
         portfolio = portfolio.merge(div_summary, on='Symbol', how='left')
         portfolio['Total_Dividend'] = portfolio['Total_Dividend'].fillna(0)
         
-        # 🏎️ ปรับระบบดึงราคาเป็นแบบสุ่มตรวจดึงเดี่ยววนรอบเพื่อแก้ปัญหา Timezone บนหน้าคลาวด์หลุดเป็น 0
-        with st.spinner('กำลังดึงข้อมูลราคาสดจากตลาดหุ้น...'):
+        # 🏎️ เรียกใช้งานระบบดึงราคาผ่าน Cache
+        with st.spinner('กำลังโหลดข้อมูลราคาสดจากตลาดหุ้น...'):
+            symbol_list = portfolio['YF_Symbol'].tolist()
+            cached_prices = fetch_stock_prices(symbol_list)
+            
+            # แมปราคากลับเข้าตารางพอร์ต หากตัวไหนราคาหลุดเป็น 0 ให้เอา Avg_Price ประคองแทนหน้าจอแดง
             prices = []
-            for s in portfolio['YF_Symbol']:
-                last_price = 0
-                try:
-                    ticker_obj = yf.Ticker(s)
-                    # ใช้ fast_info เป็นหลัก ถ้าไม่ได้ให้ถอยไปใช้ประวัติวันล่าสุด
-                    last_price = ticker_obj.fast_info['last_price']
-                    if pd.isna(last_price) or last_price <= 0:
-                        last_price = ticker_obj.history(period="1d")['Close'].iloc[-1]
-                except:
-                    last_price = 0
-                prices.append(last_price)
+            for s in symbol_list:
+                p_val = cached_prices.get(s, 0)
+                if p_val <= 0:
+                    p_val = portfolio[portfolio['YF_Symbol'] == s]['Avg_Price'].values[0]
+                prices.append(p_val)
                 
             portfolio['Current_Price'] = prices
 
