@@ -22,7 +22,7 @@ def find_excel_file():
 
 DEFAULT_EXCEL_FILE = find_excel_file()
 
-# 📦 ระบบเชื่อมสัมพันธ์ระหว่างไฟล์ในระบบหลักและตัวแปรจำลอง (Session State) เพื่อป้องกันข้อมูลหายระหว่างวัน
+# 📦 ระบบโหลดข้อมูลจากไฟล์ Excel หลักในโปรเจกต์เข้าสู่ Session State เพื่อความลื่นไหลในการใช้งาน
 if 'df_portfolio' not in st.session_state:
     if os.path.exists(DEFAULT_EXCEL_FILE):
         try:
@@ -124,22 +124,9 @@ def draw_technical_chart(symbol, period_choice):
         st.error(f"ไม่สามารถดึงข้อมูลกราฟของหุ้น {symbol} ได้ในขณะนี้: {e}")
 
 # ==============================================================================
-# SIDEBAR: ศูนย์จัดการและสำรองข้อมูลพอร์ตโฟลิโอ (Data Center)
+# SIDEBAR: ศูนย์จัดการธุรกรรมหุ้นและปุ่มดาวน์โหลด Backup ล่าสุด
 # ==============================================================================
-st.sidebar.header("⚙️ Data & Portfolio Center")
-
-# 📥 ระบบอัปโหลดไฟล์ (กู้คืนข้อมูลกรณีคลาวด์จำลองรีเซ็ตข้ามคืน)
-uploaded_file = st.sidebar.file_uploader("📥 อัปโหลดไฟล์พอร์ตเพื่อกู้คืนข้อมูล", type=["xlsx"])
-if uploaded_file is not None:
-    try:
-        df_uploaded = pd.read_excel(uploaded_file)
-        df_uploaded = df_uploaded.rename(columns={'Fill Price': 'Fill_Price', 'Closing Time': 'Closing_Time'})
-        if 'Symbol' in df_uploaded.columns:
-            df_uploaded['Symbol'] = df_uploaded['Symbol'].astype(str).str.strip()
-        st.session_state.df_portfolio = df_uploaded
-        st.sidebar.success("🎯 โหลดและซิงค์ข้อมูลจากไฟล์อัปโหลดสำเร็จ!")
-    except Exception as e:
-        st.sidebar.error(f"ไฟล์ที่อัปโหลดไม่ถูกต้องหรือโครงสร้างผิดพลาด: {e}")
+st.sidebar.header("⚙️ Portfolio Data Center")
 
 show_manager = st.sidebar.checkbox("เปิดเมนูจัดการธุรกรรม (Add/Delete)")
 
@@ -169,11 +156,11 @@ if show_manager:
                 }])
                 st.session_state.df_portfolio = pd.concat([st.session_state.df_portfolio, new_row], ignore_index=True)
                 
-                # เขียนประคองเก็บลงไฟล์สำรองในเครื่องเซิร์ฟเวอร์จำลอง
+                # เขียนบันทึกลงดิสก์จำลองหลังบ้าน
                 df_to_save = st.session_state.df_portfolio.rename(columns={'Fill_Price': 'Fill Price', 'Closing_Time': 'Closing Time'})
                 df_to_save.to_excel(DEFAULT_EXCEL_FILE, index=False)
                 st.cache_data.clear() 
-                st.success(f"บันทึกหุ้น {sym.upper()} ลงระบบชั่วคราวสำเร็จ!")
+                st.success(f"บันทึกข้อมูลหุ้น {sym.upper()} เรียบร้อย!")
                 st.rerun()
 
     # รายการแสดงสำหรับกดลบธุรกรรมที่เลือกเอาออก
@@ -192,9 +179,9 @@ if show_manager:
                     st.success(f"ลบรายการลำดับที่ {idx} สำเร็จ!")
                     st.rerun()
                     
-    # 💾 [ส่วนแก้ไขบั๊ก] ระบบดาวน์โหลดไฟล์สำรองถาวร เปลี่ยนมาใช้ openpyxl รันบน Cloud ได้ชัวร์ 100%
+    # 💾 ระบบดาวน์โหลดไฟล์สำรองถาวร (ใช้เอนจิ้น openpyxl ที่รองรับ Cloud 100%)
     st.markdown("---")
-    st.subheader("💾 Backup ข้อมูลถาวร")
+    st.subheader("💾 Backup ข้อมูลพอร์ตล่าสุด")
     df_download_ready = st.session_state.df_portfolio.rename(columns={'Fill_Price': 'Fill Price', 'Closing_Time': 'Closing Time'})
     
     import io
@@ -203,12 +190,12 @@ if show_manager:
         df_download_ready.to_excel(writer, index=False, sheet_name='Portfolio')
     
     st.sidebar.download_button(
-        label="💾 ดาวน์โหลดไฟล์ Excel เพื่อเซฟเก็บลงคอม",
+        label="💾 ดาวน์โหลดไฟล์ Excel เพื่อนำไปอัปเดตลง GitHub",
         data=buffer.getvalue(),
         file_name="portfolio.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    st.sidebar.caption("💡 แนะนำ: เมื่อเพิ่มหุ้นใหม่เสร็จสิ้น ให้กดดาวน์โหลดไฟล์นี้เก็บไว้เปิดกู้ข้อมูลในวันถัดไปครับ")
+    st.sidebar.caption("💡 แนะนำ: หลังจากพพี่ยอด เพิ่ม/ลบ หุ้นในหน้านี้เสร็จแล้ว ให้กดปุ่มดาวน์โหลดไฟล์นี้ไปเซฟทับตัวเก่าในเครื่องคอม แล้วสั่ง Git Push ขึ้น GitHub ได้ทันทีครับ ข้อมูลจะอยู่ถาวรตลอดไปครับ")
     st.markdown("---")
 
 # ==============================================================================
@@ -315,7 +302,6 @@ if not df_raw.empty:
         st.write("---")
         
         # 🎯 PHASE 3: INTERACTIVE CHARTS & TECHNICAL ANALYTICS
-        # สั่งวาดกราฟทันทีที่ผู้ใช้คลิกเลือกเปลี่ยนชื่อหุ้นหรือกรอบเวลาผ่านกล่อง Selectbox
         st.subheader("🎯 การวิเคราะห์ทางเทคนิครายหุ้น (Interactive Technical Charts)")
         chart_col1, chart_col2 = st.columns([2, 2])
         with chart_col1:
