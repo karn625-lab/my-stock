@@ -7,12 +7,12 @@ from plotly.subplots import make_subplots
 import glob
 import os
 
-# 1. การตั้งค่าหน้าจอแบบ Wide-screen
+# 1. การตั้งค่าหน้าจอแบบ Wide-screen ให้สวยงามสไตล์ Terminal
 st.set_page_config(layout="wide", page_title="My Stock Portfolio")
 
 st.title("📊 My Custom Stock Terminal")
 
-# 🔍 ค้นหาไฟล์ Excel ในโปรเจกต์อัตโนมัติ
+# 🔍 ค้นหาไฟล์ Excel ในโปรเจกต์อัตโนมัติ (เป็นค่าตั้งต้น)
 @st.cache_resource
 def find_excel_file():
     excel_files = glob.glob("My portfolio_*.xlsx") + glob.glob("portfolio.xlsx")
@@ -22,7 +22,7 @@ def find_excel_file():
 
 DEFAULT_EXCEL_FILE = find_excel_file()
 
-# 📦 [ระบบใหม่] โหลดข้อมูลเชื่อมสัมพันธ์ระหว่าง ไฟล์อัปโหลด และ ไฟล์ในระบบ
+# 📦 ระบบเชื่อมสัมพันธ์ระหว่างไฟล์ในระบบหลักและตัวแปรจำลอง (Session State) เพื่อป้องกันข้อมูลหายระหว่างวัน
 if 'df_portfolio' not in st.session_state:
     if os.path.exists(DEFAULT_EXCEL_FILE):
         try:
@@ -46,7 +46,7 @@ def get_fx_rate():
 
 fx_rate = get_fx_rate()
 
-# 🏎️ ฟังก์ชันดึงราคาหุ้นกลุ่มความเร็วสูง พร้อมระบบ Cache ป้องกันราคาเป็น 0 (จำค่า 5 นาที)
+# 🏎️ ฟังก์ชันดึงราคาหุ้นกลุ่มความเร็วสูง พร้อมระบบ Cache 5 นาที ป้องกันราคาเป็น 0
 @st.cache_data(ttl=300)
 def fetch_stock_prices(symbol_list):
     prices_dict = {}
@@ -75,7 +75,7 @@ def fetch_stock_prices(symbol_list):
                 prices_dict[s] = 0
     return prices_dict
 
-# 📈 ฟังก์ชันสำหรับคำนวณและสร้างเทคนิคอลกราฟ (EMA / RSI)
+# 📈 ฟังก์ชันสำหรับคำนวณและสร้างเทคนิคอลกราฟ (EMA / RSI) แบบยืดหยุ่นตามเวลาที่เลือก
 def draw_technical_chart(symbol, period_choice):
     try:
         stock = yf.Ticker(symbol)
@@ -84,6 +84,7 @@ def draw_technical_chart(symbol, period_choice):
             st.warning(f"ข้อมูลหุ้น {symbol} มีไม่เพียงพอสำหรับการคำนวณเส้นเทคนิคอลในกรอบเวลานี้")
             return
 
+        # คำนวณเส้นอินดิเคเตอร์เชิงเทคนิค
         df_hist['EMA_20'] = df_hist['Close'].ewm(span=20, adjust=False).mean()
         delta = df_hist['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -91,25 +92,44 @@ def draw_technical_chart(symbol, period_choice):
         rs = gain / loss
         df_hist['RSI_14'] = 100 - (100 / (1 + rs))
 
+        # สร้างกราฟสองชั้น (Row 1 ราคา + EMA / Row 2 ดัชนี RSI)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
+        
+        # วาดกราฟแท่งเทียน Candlestick
         fig.add_trace(go.Candlestick(x=df_hist.index, open=df_hist['Open'], high=df_hist['High'], low=df_hist['Low'], close=df_hist['Close'], name="Candlestick"), row=1, col=1)
+        # วาดเส้นเฉลี่ยเคลื่อนที่ EMA 20
         fig.add_trace(go.Scatter(x=df_hist.index, y=df_hist['EMA_20'], mode='lines', line=dict(color='#ff9900', width=1.5), name='EMA (20)'), row=1, col=1)
+        # วาดดัชนี RSI
         fig.add_trace(go.Scatter(x=df_hist.index, y=df_hist['RSI_14'], mode='lines', line=dict(color='#9b5de5', width=1.5), name='RSI (14)'), row=2, col=1)
+        
+        # ลากเส้นบอกโซน Overbought (70) และ Oversold (30) ของ RSI
         fig.add_hline(y=70, line_dash="dash", line_color="#ff3b30", opacity=0.5, row=2, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="#00b074", opacity=0.5, row=2, col=1)
 
-        fig.update_layout(title=f"📈 กราฟเทคนิคอลแบบเรียลไทม์: {symbol} ({period_choice})", xaxis_rangeslider_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#131722', yaxis=dict(gridcolor='#2a2e39', title="ราคาหุ้น"), yaxis2=dict(gridcolor='#2a2e39', title="RSI", range=[10, 90]), xaxis=dict(gridcolor='#2a2e39'), height=500, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        # ตกแต่งหน้าตากราฟให้เข้ากับ Dark Theme สไตล์ TradingView
+        fig.update_layout(
+            title=f"📈 กราฟเทคนิคอลเรียลไทม์: {symbol} ({period_choice})", 
+            xaxis_rangeslider_visible=False, 
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='#131722', 
+            yaxis=dict(gridcolor='#2a2e39', title="ราคาหุ้น"), 
+            yaxis2=dict(gridcolor='#2a2e39', title="RSI", range=[10, 90]), 
+            xaxis=dict(gridcolor='#2a2e39'), 
+            height=500, 
+            showlegend=True, 
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
-        st.error(f"ไม่สามารถโหลดกราฟของหุ้น {symbol} ได้ในขณะนี้: {e}")
+        st.error(f"ไม่สามารถดึงข้อมูลกราฟของหุ้น {symbol} ได้ในขณะนี้: {e}")
 
 # ==============================================================================
-# SIDEBAR: หน้าต่างจัดการธุรกรรม + ระบบสำรองข้อมูลถาวร
+# SIDEBAR: ศูนย์จัดการและสำรองข้อมูลพอร์ตโฟลิโอ (Data Center)
 # ==============================================================================
 st.sidebar.header("⚙️ Data & Portfolio Center")
 
-# 🔥 [ฟีเจอร์ความปลอดภัยใหม่ 1] อัปโหลดไฟล์ Excel อัปเดตล่าสุดจากพี่ยอดได้โดยตรง
-uploaded_file = st.sidebar.file_uploader("📥 อัปโหลดไฟล์พอร์ตล่าสุด (กรณีข้อมูลคลาวด์รีเซ็ต)", type=["xlsx"])
+# 📥 ระบบอัปโหลดไฟล์ (กู้คืนข้อมูลกรณีคลาวด์จำลองรีเซ็ตข้ามคืน)
+uploaded_file = st.sidebar.file_uploader("📥 อัปโหลดไฟล์พอร์ตเพื่อกู้คืนข้อมูล", type=["xlsx"])
 if uploaded_file is not None:
     try:
         df_uploaded = pd.read_excel(uploaded_file)
@@ -117,9 +137,9 @@ if uploaded_file is not None:
         if 'Symbol' in df_uploaded.columns:
             df_uploaded['Symbol'] = df_uploaded['Symbol'].astype(str).str.strip()
         st.session_state.df_portfolio = df_uploaded
-        st.sidebar.success("🎯 โหลดพอร์ตจากไฟล์ที่คุณอัปโหลดสำเร็จ!")
+        st.sidebar.success("🎯 โหลดและซิงค์ข้อมูลจากไฟล์อัปโหลดสำเร็จ!")
     except Exception as e:
-        st.sidebar.error(f"ไฟล์ที่อัปโหลดไม่ถูกต้อง: {e}")
+        st.sidebar.error(f"ไฟล์ที่อัปโหลดไม่ถูกต้องหรือโครงสร้างผิดพลาด: {e}")
 
 show_manager = st.sidebar.checkbox("เปิดเมนูจัดการธุรกรรม (Add/Delete)")
 
@@ -127,12 +147,13 @@ if show_manager:
     st.markdown("---")
     st.subheader("🛠️ การจัดการธุรกรรมหุ้น")
     
+    # ฟอร์มสำหรับกรอกเพิ่มหุ้น/ปันผลใหม่ลงพอร์ต
     with st.expander("➕ เพิ่มธุรกรรมใหม่ (Add Transaction)", expanded=False):
         with st.form("add_form", clear_on_submit=True):
             sym = st.text_input("สัญลักษณ์หุ้น (เช่น SET:PTT หรือ NASDAQ:AAPL)").strip()
             side = st.selectbox("ประเภทธุรกรรม (Side)", ["Buy", "Dividend"])
-            qty = st.number_input("จำนวนหุ้น / จำนวนเงินปันผลที่ได้รับ (Qty)", min_value=0.0, step=0.000001, format="%.6f")
-            price = st.number_input("ราคาต่อหน่วย (Fill Price) *ใส่ 0 ถ้าเป็นเงินปันผล*", min_value=0.0, step=0.01)
+            qty = st.number_input("จำนวนหุ้น / เงินปันผลรวมที่ได้รับ (Qty)", min_value=0.0, step=0.000001, format="%.6f")
+            price = st.number_input("ราคาต่อหน่วย (Fill Price) *กรณีปันผลให้ใส่ 0*", min_value=0.0, step=0.01)
             comm = st.number_input("ค่าธรรมเนียม / คอมมิชชั่น (Commission)", min_value=0.0, step=0.01)
             date = st.date_input("วันที่ทำรายการ")
             
@@ -148,16 +169,17 @@ if show_manager:
                 }])
                 st.session_state.df_portfolio = pd.concat([st.session_state.df_portfolio, new_row], ignore_index=True)
                 
-                # เขียนประคองลงแผ่นดิสก์จำลอง
+                # เขียนประคองเก็บลงไฟล์สำรองในเครื่องเซิร์ฟเวอร์จำลอง
                 df_to_save = st.session_state.df_portfolio.rename(columns={'Fill_Price': 'Fill Price', 'Closing_Time': 'Closing Time'})
                 df_to_save.to_excel(DEFAULT_EXCEL_FILE, index=False)
                 st.cache_data.clear() 
-                st.success(f"บันทึกข้อมูล {sym.upper()} เรียบร้อยแล้ว!")
+                st.success(f"บันทึกหุ้น {sym.upper()} ลงระบบชั่วคราวสำเร็จ!")
                 st.rerun()
 
+    # รายการแสดงสำหรับกดลบธุรกรรมที่เลือกเอาออก
     if not st.session_state.df_portfolio.empty:
         with st.expander("🗑️ ลบธุรกรรมที่บันทึกไว้ (Delete Transaction)"):
-            st.write("กดปุ่ม 'ลบ' ท้ายรายการ:")
+            st.write("กดปุ่ม 'ลบ' ท้ายรายการธุรกรรมที่คุณต้องการนำออก:")
             for idx in reversed(st.session_state.df_portfolio.index):
                 item = st.session_state.df_portfolio.loc[idx]
                 col_item, col_btn = st.columns([4, 1])
@@ -167,18 +189,17 @@ if show_manager:
                     df_to_save = st.session_state.df_portfolio.rename(columns={'Fill_Price': 'Fill Price', 'Closing_Time': 'Closing Time'})
                     df_to_save.to_excel(DEFAULT_EXCEL_FILE, index=False)
                     st.cache_data.clear()
-                    st.success(f"ลบรายการสำเร็จ!")
+                    st.success(f"ลบรายการลำดับที่ {idx} สำเร็จ!")
                     st.rerun()
                     
-    # 🔥 [ฟีเจอร์ความปลอดภัยใหม่ 2] ปุ่ม Download เพื่อดึงไฟล์เวอร์ชันอัปเดตใหม่สุดลงคอมตัวเองทันที!
+    # 💾 [ส่วนแก้ไขบั๊ก] ระบบดาวน์โหลดไฟล์สำรองถาวร เปลี่ยนมาใช้ openpyxl รันบน Cloud ได้ชัวร์ 100%
     st.markdown("---")
     st.subheader("💾 Backup ข้อมูลถาวร")
     df_download_ready = st.session_state.df_portfolio.rename(columns={'Fill_Price': 'Fill Price', 'Closing_Time': 'Closing Time'})
     
-    # แปลงไฟล์ในหน่วยความจำเพื่อส่งให้เบราว์เซอร์ดาวน์โหลด
     import io
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df_download_ready.to_excel(writer, index=False, sheet_name='Portfolio')
     
     st.sidebar.download_button(
@@ -187,11 +208,11 @@ if show_manager:
         file_name="portfolio.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    st.sidebar.caption("💡 แนะนำให้กดดาวน์โหลดเก็บไว้หลังทำการแก้ไขหุ้น เพื่อให้ข้อมูลอยู่กับคุณตลอดไปไม่โดน Cloud ลบครับ")
+    st.sidebar.caption("💡 แนะนำ: เมื่อเพิ่มหุ้นใหม่เสร็จสิ้น ให้กดดาวน์โหลดไฟล์นี้เก็บไว้เปิดกู้ข้อมูลในวันถัดไปครับ")
     st.markdown("---")
 
 # ==============================================================================
-# MAIN DASHBOARD: คำนวณผลและแสดงกราฟหน้าจอหลัก
+# MAIN DASHBOARD: คำนวณสถิติทางการเงินและวิเคราะห์สัดส่วนพอร์ต
 # ==============================================================================
 df_raw = st.session_state.df_portfolio.copy()
 
@@ -199,6 +220,7 @@ if not df_raw.empty:
     df_buy = df_raw[df_raw['Side'] == 'Buy'].copy()
     df_div = df_raw[df_raw['Side'] == 'Dividend'].copy()
     
+    # แปลงสัญลักษณ์ของหุ้นให้สอดคล้องกับ Yahoo Finance
     def convert_symbol(symbol):
         sym_clean = str(symbol).upper().strip()
         if sym_clean.startswith('SET:'): 
@@ -209,6 +231,7 @@ if not df_raw.empty:
         df_buy['YF_Symbol'] = df_buy['Symbol'].apply(convert_symbol)
         df_buy['Total_Cost'] = (df_buy['Qty'] * df_buy['Fill_Price']) + df_buy['Commission']
         
+        # รวมกลุ่มธุรกรรมรายหุ้นหาต้นทุนเฉลี่ย
         portfolio = df_buy.groupby('YF_Symbol').agg({
             'Qty': 'sum',
             'Total_Cost': 'sum',
@@ -217,13 +240,15 @@ if not df_raw.empty:
         
         portfolio['Avg_Price'] = portfolio['Total_Cost'] / portfolio['Qty']
         
+        # คำนวณเงินปันผลสะสมรายหุ้น
         div_summary = df_div.groupby('Symbol')['Qty'].sum().reset_index() if not df_div.empty else pd.DataFrame(columns=['Symbol', 'Total_Dividend'])
         div_summary.columns = ['Symbol', 'Total_Dividend']
         
         portfolio = portfolio.merge(div_summary, on='Symbol', how='left')
         portfolio['Total_Dividend'] = portfolio['Total_Dividend'].fillna(0)
         
-        with st.spinner('กำลังโหลดข้อมูลราคาสดจากตลาดหุ้น...'):
+        # ยิงเรียกราคาตลาดปัจจุบันผ่าน yfinance อัตโนมัติ
+        with st.spinner('กำลังเชื่อมต่อข้อมูลราคาสดส่งตรงจากตลาดทุน...'):
             symbol_list = portfolio['YF_Symbol'].tolist()
             cached_prices = fetch_stock_prices(symbol_list)
             
@@ -238,6 +263,7 @@ if not df_raw.empty:
 
         portfolio['Current_Value'] = portfolio['Qty'] * portfolio['Current_Price']
         
+        # คำนวณปรับค่าเงิน (แปลงดอลลาร์สหรัฐ เป็นเงินบาทไทยกรณีหุ้นนอก)
         portfolio['Value_THB'] = portfolio.apply(lambda x: x['Current_Value'] * fx_rate if ".BK" not in x['YF_Symbol'] else x['Current_Value'], axis=1)
         portfolio['Cost_THB'] = portfolio.apply(lambda x: x['Total_Cost'] * fx_rate if ".BK" not in x['YF_Symbol'] else x['Total_Cost'], axis=1)
         portfolio['Dividend_THB'] = portfolio.apply(lambda x: x['Total_Dividend'] * fx_rate if ".BK" not in x['YF_Symbol'] else x['Total_Dividend'], axis=1)
@@ -245,7 +271,7 @@ if not df_raw.empty:
         portfolio['PL_THB'] = portfolio['Value_THB'] - portfolio['Cost_THB']
         portfolio['PL_Percent'] = (portfolio['PL_THB'] / portfolio['Cost_THB']) * 100 if portfolio['Cost_THB'].sum() > 0 else 0
         
-        # 📊 คำนวณตัวเลขสำหรับ 4 กล่อง TradingView
+        # 📊 คำนวณสรุปตัวเลขรวมหน้าพอร์ต (TradingView Style KPI)
         total_val_thb = portfolio['Value_THB'].sum()
         total_cost_thb = portfolio['Cost_THB'].sum()
         unrealized_pl_thb = portfolio['PL_THB'].sum()
@@ -260,7 +286,7 @@ if not df_raw.empty:
         realized_pl_usd = realized_pl_thb / fx_rate
         all_pl_usd = all_pl_thb / fx_rate
 
-        # 🎨 สร้าง 4 กล่องแดชบอร์ด
+        # 🎨 แสดงผล 4 กล่องการเงินสรุปภาพรวมด้านบนสุดของแอป
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.markdown(f'<div style="background-color: #1c2030; padding: 18px; border-radius: 8px; border: 1px solid #2d3247;"><p style="color: #848e9c; font-size: 13px; margin: 0; font-weight: 500;">มูลค่าพอร์ตโฟลิโอ (Equity)</p><p style="color: #ffffff; font-size: 26px; font-weight: 700; margin: 8px 0 0 0;">฿{total_val_thb:,.2f}</p><p style="color: #848e9c; font-size: 15px; margin: 2px 0 0 0;">${total_val_usd:,.2f} <span style="font-size: 12px;">USD</span></p></div>', unsafe_allow_html=True)
@@ -278,6 +304,7 @@ if not df_raw.empty:
         
         st.write("---")
 
+        # 📋 ตารางแจกแจงรายละเอียดหุ้นในพอร์ตแบบมีสีสันไฮไลท์แดงเขียว
         st.subheader("📋 รายละเอียดหุ้นในพอร์ตโฟลิโอ")
         table_show = portfolio[['Symbol', 'Qty', 'Avg_Price', 'Current_Price', 'Value_THB', 'PL_THB', 'PL_Percent', 'Dividend_THB']].copy()
         table_show.columns = ['Symbol', 'Qty', 'Avg Price', 'Last Price', 'Current Value', 'P/L (THB)', 'P/L %', 'Dividends Received']
@@ -287,7 +314,8 @@ if not df_raw.empty:
 
         st.write("---")
         
-        # 🎯 SECTION: INTERACTIVE CHARTS & TECHNICAL ANALYTICS
+        # 🎯 PHASE 3: INTERACTIVE CHARTS & TECHNICAL ANALYTICS
+        # สั่งวาดกราฟทันทีที่ผู้ใช้คลิกเลือกเปลี่ยนชื่อหุ้นหรือกรอบเวลาผ่านกล่อง Selectbox
         st.subheader("🎯 การวิเคราะห์ทางเทคนิครายหุ้น (Interactive Technical Charts)")
         chart_col1, chart_col2 = st.columns([2, 2])
         with chart_col1:
@@ -300,6 +328,7 @@ if not df_raw.empty:
             draw_technical_chart(selected_stock, time_period)
             
         st.write("---")
+        # 🥧 กราฟพายสัดส่วนการกระจายความเสี่ยงของเงินลงทุน (Portfolio Allocation)
         st.subheader("🥧 สัดส่วนการลงทุน (Portfolio Allocation)")
         fig_pie = px.pie(portfolio, values='Value_THB', names='Symbol', hole=0.4)
         fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
